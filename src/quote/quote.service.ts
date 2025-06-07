@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import { sql } from '../config/db';
 import { CreateQuoteDto, UpdateQuoteDto, QuoteQueryDto } from './dto/quote.dto';
 import { User } from './interfaces/auth.interface';
@@ -287,40 +287,41 @@ export class QuoteService {
   }
 
   async getQuoteById(id: number) {
-    const quote = await sql`
-      SELECT 
-        q.id,
-        q.content,
-        q.author,
-        q.category,
-        q.tags,
-        q.vote_count,
-        q.created_at,
-        q.updated_at,
-        u.name AS user_name
-      FROM quotes q
-      LEFT JOIN users u ON q.user_id = u.id
-      WHERE q.id = ${id}
-    `;
+  // Query quote + user.name
+  const quote = await sql`
+    SELECT 
+      q.id,
+      q.content,
+      q.author,
+      q.category,
+      q.tags,
+      q.vote_count,
+      q.created_at,
+      q.updated_at,
+      u.name AS user_name
+    FROM quotes q
+    LEFT JOIN users u ON q.user_id = u.id
+    WHERE q.id = ${id}
+  `;
 
-    if (quote.length === 0) {
-      throw new NotFoundException('Quote not found');
-    }
-
-    const result = quote[0];
-
-    return {
-      id: result.id,
-      content: result.content,
-      author: result.author,
-      category: result.category,
-      tags: result.tags ? JSON.parse(result.tags) : [],
-      vote_count: result.vote_count,
-      created_at: result.created_at,
-      updated_at: result.updated_at,
-      user_name: result.user_name || null,
-    };
+  if (quote.length === 0) {
+    throw new NotFoundException('Quote not found');
   }
+
+  const result = quote[0];
+
+  return {
+    id: result.id,
+    content: result.content,
+    author: result.author,
+    category: result.category,
+    tags: result.tags ? JSON.parse(result.tags) : [],
+    vote_count: result.vote_count,
+    created_at: result.created_at,
+    updated_at: result.updated_at,
+    user_name: result.user_name || null,
+  };
+}
 
   async updateQuote(id: number, updateQuoteDto: UpdateQuoteDto, userId: string) {
     const { content, author, category, tags } = updateQuoteDto;
@@ -398,85 +399,109 @@ export class QuoteService {
     return { message: 'Quote deleted successfully' };
   }
 
-  async getPersonalSummary(userId: string) {
-    try {
-      // 1. Total Quotes ที่สร้างของตัวเอง
-      const userQuotesResult = await sql`
-        SELECT COUNT(*) as my_quotes_count FROM quotes WHERE user_id = ${userId}
-      `;
-      const totalQuotesCreated = Number(userQuotesResult[0].my_quotes_count);
+  async getPersonalSummary(user: User) {
+  if (!user) {
+    throw new HttpException(
+      {
+        success: false,
+        message: 'Unauthorized',
+      },
+      HttpStatus.UNAUTHORIZED,
+    );
+  }
 
-      // 2. Total Votes ที่ได้รับทั้งหมดของตัวเอง
-      const userVotesResult = await sql`
-        SELECT COALESCE(SUM(vote_count), 0) as total_votes_received 
-        FROM quotes 
-        WHERE user_id = ${userId}
-      `;
-      const totalVotesReceived = Number(userVotesResult[0].total_votes_received);
+  const userId = user.id;
+  console.log("user id: ", userId);
 
-      // 3. Ranking การจัดอันดับเมื่อเทียบกับทุกคน
-      const userRankResult = await sql`
-        WITH user_stats AS (
-          SELECT 
-            u.id,
-            COALESCE(SUM(q.vote_count), 0) as total_votes_received
-          FROM users u
-          LEFT JOIN quotes q ON u.id = q.user_id
-          GROUP BY u.id
-        ),
-        ranked_users AS (
-          SELECT 
-            id,
-            total_votes_received,
-            ROW_NUMBER() OVER (ORDER BY total_votes_received DESC) as rank
-          FROM user_stats
-          WHERE total_votes_received > 0
-        )
-        SELECT rank FROM ranked_users WHERE id = ${userId}
-      `;
-      const userRank = userRankResult.length > 0 ? Number(userRankResult[0].rank) : null;
+  try {
+    // 1. Total Quotes ที่สร้างของตัวเอง
+    const userQuotesResult = await sql`
+      SELECT COUNT(*) as my_quotes_count FROM quotes WHERE user_id = ${userId}
+    `;
+    const totalQuotesCreated = Number(userQuotesResult[0].my_quotes_count);
 
-      // 4. Category Distribution
-      const userCategoriesResult = await sql`
+    // 2. Total Votes ที่ได้รับทั้งหมดของตัวเอง
+    const userVotesResult = await sql`
+      SELECT COALESCE(SUM(vote_count), 0) as total_votes_received 
+      FROM quotes 
+      WHERE user_id = ${userId}
+    `;
+    const totalVotesReceived = Number(userVotesResult[0].total_votes_received);
+
+    // 3. Ranking การจัดอันดับเมื่อเทียบกับทุกคน (ตาม votes ที่ได้รับ)
+    const userRankResult = await sql`
+      WITH user_stats AS (
         SELECT 
-          LOWER(category) as category,
-          COUNT(*) as count
-        FROM quotes
-        WHERE user_id = ${userId} AND category IS NOT NULL
-        GROUP BY LOWER(category)
-        ORDER BY count DESC
-      `;
+          u.id,
+          COALESCE(SUM(q.vote_count), 0) as total_votes_received
+        FROM users u
+        LEFT JOIN quotes q ON u.id = q.user_id
+        GROUP BY u.id
+      ),
+      ranked_users AS (
+        SELECT 
+          id,
+          total_votes_received,
+          ROW_NUMBER() OVER (ORDER BY total_votes_received DESC) as rank
+        FROM user_stats
+        WHERE total_votes_received > 0
+      )
+      SELECT rank FROM ranked_users WHERE id = ${userId}
+    `;
+    const userRank = userRankResult.length > 0 ? Number(userRankResult[0].rank) : null;
 
-      const totalCategorizedQuotes = userCategoriesResult.reduce(
-        (sum, cat) => sum + Number(cat.count),
-        0
-      );
+    // 4. Category Distribution (เฉพาะที่มีจริง)
+    const userCategoriesResult = await sql`
+      SELECT 
+        LOWER(category) as category,
+        COUNT(*) as count
+      FROM quotes
+      WHERE user_id = ${userId} AND category IS NOT NULL
+      GROUP BY LOWER(category)
+      ORDER BY count DESC
+    `;
 
-      const categoryDistribution = userCategoriesResult.map(cat => {
-        const count = Number(cat.count);
-        const percentage = totalCategorizedQuotes > 0
-          ? Math.round((count / totalCategorizedQuotes) * 10000) / 100
-          : 0;
+    const totalCategorizedQuotes = userCategoriesResult.reduce(
+      (sum, cat) => sum + Number(cat.count),
+      0
+    );
 
-        return {
-          category: cat.category,
-          count,
-          percentage
-        };
-      });
+    const categoryDistribution = userCategoriesResult.map(cat => {
+      const count = Number(cat.count);
+      const percentage = totalCategorizedQuotes > 0
+        ? Math.round((count / totalCategorizedQuotes) * 10000) / 100
+        : 0;
 
       return {
+        category: cat.category,
+        count,
+        percentage
+      };
+    });
+
+    return {
+      success: true,
+      message: "Personal summary fetched successfully",
+      data: {
         total_quotes_created: totalQuotesCreated,
         total_votes_received: totalVotesReceived,
         ranking: userRank,
         category_distribution: categoryDistribution
-      };
+      }
+    };
 
-    } catch (error: any) {
-      console.error('Error fetching personal summary:', error);
-      throw new Error('Failed to fetch personal summary');
-    }
+  } catch (error: any) {
+    console.error('Error fetching personal summary:', error);
+    throw new HttpException(
+      {
+        success: false,
+        message: "Failed to fetch personal summary",
+        error: error.message
+      },
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
   }
+}
 
   async getTopVotedQuotes() {
     try {

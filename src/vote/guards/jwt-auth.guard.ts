@@ -5,14 +5,16 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as jwt from 'jsonwebtoken';
-import { JwtPayload } from 'jsonwebtoken';
-import { sql } from 'src/config/db';
-import { User } from '../interfaces/auth.interface';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+// import { User } from '../interfaces/auth.interface';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private httpService: HttpService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -24,44 +26,24 @@ export class JwtAuthGuard implements CanActivate {
         throw new UnauthorizedException('Access token is required (Bearer token)');
       }
 
-      const token = authHeader.replace('Bearer ', '');
+      const token = authHeader.split(' ')[1];
 
-      // ตรวจสอบความถูกต้องของ token
-      const decodedValue = jwt.verify(
-        token,
-        this.configService.get('JWT_SEC') as string,
-      ) as JwtPayload;
+      // เรียก external API เพื่อตรวจสอบ token และดึงข้อมูล user
+      const userUrl = this.configService.get('USER_URL');
+      const response = await firstValueFrom(
+        this.httpService.get(`${userUrl}/api/auth/user`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        })
+      );
 
-      // token ไม่ถูกต้องหรือไม่มี id = 401 Unauthorized
-      if (!decodedValue || !decodedValue.id) {
-        throw new UnauthorizedException('Invalid or malformed token');
-      }
-
-      const userId = decodedValue.id;
-
-      // ค้นหา user ในฐานข้อมูล
-      const userResult = await sql`
-        SELECT id, email, name, avatar, created_at, updated_at
-        FROM users
-        WHERE id = ${userId}
-      `;
-
-      if (!userResult || userResult.length === 0) {
-        throw new UnauthorizedException('Invalid token - user not found');
-      }
-
-      const user: User = {
-        id: userResult[0].id,
-        email: userResult[0].email,
-        name: userResult[0].name,
-        avatar: userResult[0].avatar,
-        created_at: userResult[0].created_at,
-        updated_at: userResult[0].updated_at,
-      };
-
-      request.user = user;
+      // ตั้ง user ใน request object
+      request.user = response.data;
       return true;
-    } catch (error) {
+
+    } catch (error: any) {
+      console.log("Error: ", error.message);
       throw new UnauthorizedException('Please Login');
     }
   }
