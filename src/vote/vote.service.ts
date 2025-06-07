@@ -91,6 +91,10 @@ export class VoteService {
         };
       }
 
+      // If vote_value is neither 1 nor -1
+      await sql`ROLLBACK`;
+      throw new BadRequestException('Vote value must be 1 or -1');
+
     } catch (error: any) {
       await sql`ROLLBACK`;
       
@@ -123,36 +127,30 @@ export class VoteService {
       WHERE user_id = ${userId} AND quote_id = ${quoteId}
     `;
 
-    const canVote = quote[0].vote_count === 0 && existingVote.length === 0;
+    // Check if user has voted for any other quote
+    const anyVote = await sql`
+      SELECT id, quote_id, vote_value 
+      FROM votes 
+      WHERE user_id = ${userId}
+    `;
+
+    const canVote = quote[0].vote_count === 0 && existingVote.length === 0 && anyVote.length === 0;
 
     return {
       quote_id: quoteId,
       can_vote: canVote,
       reasons: {
         quote_has_zero_votes: quote[0].vote_count === 0,
-        user_has_not_voted: existingVote.length === 0,
+        user_has_not_voted_this_quote: existingVote.length === 0,
+        user_has_not_voted_any_quote: anyVote.length === 0,
       },
       existing_vote: existingVote.length > 0 ? {
         vote_value: existingVote[0].vote_value,
       } : null,
+      current_vote: anyVote.length > 0 ? {
+        quote_id: anyVote[0].quote_id,
+        vote_value: anyVote[0].vote_value,
+      } : null,
     };
-  }
-
-  async getUserCurrentVote(userId: string) {
-    const currentVote = await sql`
-      SELECT 
-        v.id,
-        v.quote_id,
-        v.vote_value,
-        v.created_at,
-        q.content,
-        q.author,
-        q.vote_count
-      FROM votes v
-      JOIN quotes q ON v.quote_id = q.id
-      WHERE v.user_id = ${userId}
-    `;
-
-    return currentVote.length > 0 ? currentVote[0] : null;
   }
 }
