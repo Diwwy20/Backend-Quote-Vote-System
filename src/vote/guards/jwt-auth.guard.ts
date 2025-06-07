@@ -29,7 +29,7 @@ export class JwtAuthGuard implements CanActivate {
       const token = authHeader.split(' ')[1];
 
       // เรียก external API เพื่อตรวจสอบ token และดึงข้อมูล user
-      const userUrl = this.configService.get('USER_URL');
+      const userUrl = this.configService.get('User_URL');
       const response = await firstValueFrom(
         this.httpService.get(`${userUrl}/api/auth/user`, {
           headers: {
