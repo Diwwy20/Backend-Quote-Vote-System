@@ -45,6 +45,8 @@ JWT_SEC=<Generate a secret key by running: `node -e "console.log(require('crypto
 
 User_URL=https://backend-auth-system-production.up.railway.app
 ---
+```
+
 ## 📦 How to Run
 
 1. **Clone the repository**
