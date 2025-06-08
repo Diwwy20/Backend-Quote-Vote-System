@@ -54,13 +54,17 @@ User_URL=https://backend-auth-system-production.up.railway.app
 ```bash
 git clone https://github.com/Diwwy20/Backend-Quote-Vote-System
 cd quote-service
-
+```
+```bash
 2. **Install dependencies**
 npm install
-
+```
+```bash
 3. **Create and configure the .env file**
    - Copy the example above into a .env file in the project root
    - Make sure all environment variables are set correctly
-
+```
+```bash
 4. **Run the development server**
 npm run start:dev
+```
